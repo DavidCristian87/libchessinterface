@@ -2,4 +2,8 @@ aclocal.m4
 autom4te.cache
 config.*
 missing
-install.sh
+install-sh
+*.swp
+*~
+*.a
+*.o
