@@ -1,0 +1,12 @@
+
+Compilation on Linux:
+
+Run: ./configure && make
+If no error occured, you can now run: sudo make install
+Congratulations, libchessinterface is now compiled and installed!
+
+Compilation on Windows:
+
+The same using MinGW/MSYS (install using mingw get),
+but if you can't work it out, simply use the precompiled windows dll.
+

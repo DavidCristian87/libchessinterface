@@ -1,0 +1,8 @@
+
+#ifndef CHESSINTERFACE_H_
+#define CHESSINTERFACE_H_
+
+
+
+#endif  // CHESSINTERFACE_H_
+

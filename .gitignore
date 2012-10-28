@@ -3,6 +3,16 @@ autom4te.cache
 config.*
 missing
 install-sh
+Makefile
+Makefile.in
+m4
+depcomp
+libtool
+ltmain.sh
+.libs
+.deps
+*.lo
+*.la
 *.swp
 *~
 *.a
