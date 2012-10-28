@@ -1,12 +1,12 @@
 
 -= libchessinterface =-
 
-The chess engine C/C++ library!
+The chess engine C/C++ library for Windows and Linux!
 
 WHAT IS IT:
 
 This library takes the whole work of launching chess engines,
-establishing input/output to it and implementing the protocols
+establishing input/output to them and implementing the protocols
 UCI (Universal Chess Interface) and CECP (Chess Engine Communication
 Protocol - also called Winboard/Xboard protocol) for you.
 
