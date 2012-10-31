@@ -65,6 +65,10 @@ struct chessengineinfo {
       // (although most of them should).
 };
 
+// Get minor and major version number of the library:
+int chessinterface_GetMinorLibVersion();  // The X in 1.x (5 in v1.5)
+int chessinterface_GetMajorLibVersion();  // The X in X.5 (1 in v1.5)
+
 // Open a chess engine from the given binary path.
 struct chessinterfaceengine* chessinterface_Open(const char* path,
 const char* args, const char* workingDirectory,
