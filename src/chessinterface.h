@@ -109,11 +109,12 @@ void (*engineTalk)(const char* talk));
 // engineError:
 //   Some engines support reporting internal errors as readable
 //   string. If you provide this function (not NULL), it will be
-//   called with the error info:
+//   called with the error info FROM ANOTHER THREAD.
 // engineTalk:
 //   Some engine support talking with the user. When you use
 //   chessinterface_Usertalk(), the engine can possibly respond
-//   through this callback if you provide it (not NULL).
+//   through this callback if you provide it (not NULL), again
+//   FROM ANOTHER THREAD.
 
 // Instruct the engine to start a new game:
 void chessinterface_StartGame(struct chessinterfaceengine* engine,
@@ -148,6 +149,7 @@ void* userdata);
 // chessinterface_Move.
 // Important: this command resets the board! To start a game form
 // a non-standard position, use chessinterface_SetFEN right afterwards.
+// All callbacks will be called FROM ANOTHER THREAD.
 
 // Set the time control of the current game:
 void chessinterface_SetTimeControl(struct chessinterfaceengine* engine,
