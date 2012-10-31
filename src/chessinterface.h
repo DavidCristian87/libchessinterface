@@ -119,6 +119,7 @@ void (*engineTalk)(const char* talk));
 // Instruct the engine to start a new game:
 void chessinterface_StartGame(struct chessinterfaceengine* engine,
 int playingWhite, int analyze,
+const char* variant,
 void (*thinkCallback)(int score, int nodes, const char* pv, void* userdata),
 void (*resignCallback)(void* userdata),
 void (*drawCallback)(void* userdata),
@@ -127,6 +128,12 @@ void* userdata);
 //   1: engine plays white, 0: engine plays black
 // analyze:
 //   1: engine shouldn't play but only analyze, 0: engine plays
+// variant:
+//   Specify the variant you wish to play, e.g. "normal" for standard
+//   FIDE chess, or another for another variant.
+//   Some variants need another move format!
+//   Consult http://www.open-aurec.com/wbforum/WinBoard/engine-intf.html
+//   for possible variants and how moves are notated for them.
 // thinkCallback:
 //   This function, if not NULL, will be called when the engine
 //   emits thinking lines with score, the node count searched so far
@@ -223,13 +230,19 @@ void chessinterface_Pause(struct chessinterface* engine);
 // the next time, the game will continue.
 
 // Set position to given FEN string.
-void chessinterface_SetFEN(struct chessinterface* engine,
+int chessinterface_SetFEN(struct chessinterface* engine,
 const char* fen);
+// Depending on the chess variant you play, you may need to
+// consult
+// http://http://www.open-aurec.com/wbforum/WinBoard/engine-intf.html
+// for the variant-specific alterations to FEN.
 // If a game is currently running, it will be paused (similar to
 // chessinterface_Pause).
 // Since the engine might be confused of the moves done and time left
 // after this command, use chessinterface_SetTimeControl again
 // when having changed the position.
+// Returns 0 if libchessinterface failed to set the position
+// (the engine might have rejected it), or 1 on success.
 
 // If you want, you can pass the engine the result
 // at the end of a match:
