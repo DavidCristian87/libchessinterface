@@ -20,11 +20,10 @@
 #define EXECPROC_H_
 
 #include "os/os.h"
+#include "threading/threading.h"
 
 // Data struct containing info about a running external process:
-struct process {
-    
-};
+struct process;
 
 // Run an external process, and store the information about the running
 // process in the process struct:
@@ -51,15 +50,13 @@ const char* line, void* userdata), void* userdata);
 //
 // You will always get one full line, and the line will always be
 // terminated with a \n character.
-// Empty lines (or lines just containing space chars or tabulator
-// characters) will be dropped.
 //
 // IMPORTANT: You may get NULL as line. In that case, the process has
 // shutdown. Use execproc_Close on the process struct to clean up!
 
-// Send a line to an opened process (to its stdin).
+// Send a string to an opened process (to its stdin).
+// You should terminate your lines with \r\n or \n.
 // You may also send multiple lines at once.
-// execproc_Send may strip empty lines.
 int execproc_Send(struct process* p, const char* line);
 // Returns 1 on success, 0 on failure: on failure, the process has
 // closed down and you must use execproc_Close to clean things up.

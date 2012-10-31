@@ -188,6 +188,7 @@ threadinfo* thread_CreateInfo() {
 }
 
 void thread_FreeInfo(threadinfo* tinfo) {
+    if (!tinfo) {return;}
 #ifdef WINDOWS
     CloseHandle(tinfo->t);
 #else
