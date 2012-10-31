@@ -73,9 +73,13 @@ int chessinterface_GetMajorLibVersion();  // The X in X.5 (1 in v1.5)
 struct chessinterfaceengine* chessinterface_Open(const char* path,
 const char* args, const char* workingDirectory,
 const char* const* protocolOptions,
-void (*engineLoaded)(const struct chessengineinfo* info),
-void (*engineError)(const char* error),
-void (*engineTalk)(const char* talk));
+void (*engineLoadedCallback)(const struct chessengineinfo* info,
+  void* userdata),
+void (*engineErrorCallback)(const char* error, void* userdata),
+void (*engineTalkCallback)(const char* talk, void* userdata),
+void (*engineCommunicationLogCallback)(int outgoing, const char* line,
+  void* userdata),
+void* userdata);
 // Return value: a chess interface engine struct pointer.
 // args:
 //   command line arguments, e.g. "-hashSize 2048 -uci", or ""/NULL
@@ -104,21 +108,28 @@ void (*engineTalk)(const char* talk));
 //      "ForceProtocol"   Don't auto-detect protocol but force the
 //                        specific protocol. Possible values:
 //                        "cecp1"/"cecp2"/"uci".
-// engineLoaded:
+// engineLoadedCallback:
 //   This function will be called FROM ANOTHER THREAD as soon as
 //   the engine has been initialised and is believed to be ready
 //   for use without much further delay.
 //   You will be supplied with the engine info, which contains
 //   e.g. the detected protocol.
-// engineError:
+// engineErrorCallback:
 //   Some engines support reporting internal errors as readable
 //   string. If you provide this function (not NULL), it will be
 //   called with the error info FROM ANOTHER THREAD.
-// engineTalk:
+// engineTalkCallback:
 //   Some engine support talking with the user. When you use
 //   chessinterface_Usertalk(), the engine can possibly respond
 //   through this callback if you provide it (not NULL), again
 //   FROM ANOTHER THREAD.
+// engineCommunicationLogCallback:
+//   If you provide this function (not NULL), it will be called for
+//   every line sent to (outgoing = 1) or received from (outgoing = 0)
+//   the engine. This may be useful to an engine programmer who
+//   wishes to debug their engine using your GUI.
+// userdata:
+//   This userdata will be provided to all of your callbacks.
 
 // Instruct the engine to start a new game:
 void chessinterface_StartGame(struct chessinterfaceengine* engine,
