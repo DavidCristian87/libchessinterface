@@ -196,8 +196,13 @@ int engineSeconds, int userSeconds);
 // Please note at the start of the game, you should have called
 // chessinterface_SetTimeControl first before calling this.
 
-// Move NOW (only does something if engine is calculating a move):
+// Tell engine to move NOW (only does something if engine
+// is calculating a move):
 void chessinterface_MoveNow(struct chessinterface* engine);
+// Please note this only asks the engine to move as soon as possible,
+// however it doesn't force it to do so. Some engines might still
+// take a second or longer to react, and others might ignore your
+// request entirely.
 
 // Offer the engine a draw:
 void chessinterface_Userdraw(struct chessinterface* engine);
@@ -209,7 +214,7 @@ void chessinterface_Userdraw(struct chessinterface* engine);
 // must continue regularly.
 
 // Pause the game (only possible if engine is NOT calculating a move
-// right now):
+// right now, if it does please wait until you received it):
 void chessinterface_Pause(struct chessinterface* engine);
 // This simply tells the engine to pause its clocks.
 // As soon as you use chessinterface_Go() or chessinterface_Usermove()
