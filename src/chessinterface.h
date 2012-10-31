@@ -57,6 +57,8 @@ struct chessengineinfo {
       //         // option (otherwise: "0")
       //   "CoresSupported",
       //    "1", // it appears the engine understands the Cores option (or "0")
+      //   "Variants",
+      //   "normal,suicide,xiangqi,..",  // comma separated list of variants
       //   NULL  // last entry is always NULL
       // }
       // Important: the "..Supported" info may be wrong when passing
