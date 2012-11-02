@@ -16,6 +16,7 @@
 // along with libchessinterface in a file named COPYING.txt.
 // If not, see <http://www.gnu.org/licenses/>.
 
+#include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -34,9 +35,25 @@ struct chessinterfaceengine {
     char* workingDirectory;
     void (*loadedCallback)(const struct chessengineinfo* info,
       void* userdata);
+    void (*communicationLogCallback)(int outgoing, const char* line,
+      void* userdata);
     void* userdata;
     int isLoaded;
+    int detectionState;
 };
+#define DETECTIONSTATE_PROBING_UCI 1
+
+static void sendline(struct chessinterfaceengine* cie, const char* line, ...) {
+    char linebuf[1024];
+    va_list ap;
+    va_start(ap, line);
+    vsnprintf(linebuf, sizeof(linebuf), line, ap);
+    if (strlen(linebuf) < sizeof(linebuf) - 2) {
+        strcat(linebuf, "\r\n");
+    }
+    cie->communicationLogCallback(1, line, cie->userdata);
+    execproc_Send(cie->p, linebuf);
+}
 
 static void readcallback(struct process* p, const char* line,
 void* userdata) {
@@ -77,6 +94,12 @@ static void chessinterfacelaunchthread(void* userdata) {
         cie->loadedCallback(&(cie->i), cie->userdata);
         return;
     }
+    if (!sendline(cie, "uci")) {
+        cie->i.loadError = strdup("Cannot send data to engine");
+        ci->loadedCallback(&(cie->i), cie->userdata);
+        return;
+    }
+    cie->detectionState = DETECTIONSTATE_PROBING_UCI;
     execproc_Read(cie->p, readcallback, cie);
 }
 
@@ -106,6 +129,7 @@ void* userdata) {
     }
     cie->userdata = userdata;
     cie->loadedCallback = engineLoadedCallback;
+    cie->communicationLogCallback = engineCommunicationLogCallback;
     if (args) {
         cie->args = strdup(args);
     }

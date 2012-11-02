@@ -122,8 +122,7 @@ void execproc_ReadThread(void* userdata) {
         while (buf[strlen(buf)-1] != '\n') {
             size_t oldlen = strlen(buf);
             if (oldlen > sizeof(buf)-2) {oldlen = sizeof(buf)-2;}
-            int i = recv(readpipe, buf+oldlen, 1, 0);
-            printf("recv: %d\n", i);
+            int i = read(readpipe, buf+oldlen, 1);
             mutex_Lock(readdatamutex);
             if (*readquitsignal) {
                 // we are asked to terminate, so remove everything:
@@ -160,17 +159,20 @@ void execproc_ReadThread(void* userdata) {
                 buf[oldlen+1] = 0;
 
                 // check if we have a complete line:
-                if (buf[oldlen+1] == '\n') {
+                if (buf[oldlen] == '\n') {
                     // process line:
                     void (*readcallbackvalue)(struct process*, const char*, void*) = *readcallback;
                     void* readcallbackuserdatavalue = *readcallbackuserdata;
                     mutex_Release(readdatamutex);
+                    buf[oldlen] = 0;
                     readcallbackvalue(p, buf, readcallbackuserdatavalue);
 
                     // clear buffer:
                     buf[0] = 0;
+                    mutex_Lock(readdatamutex);
                 }
             }
+            mutex_Release(readdatamutex);
         }
     }
 }
@@ -183,7 +185,7 @@ const char* line, void* userdata), void* userdata) {
         int error = 0;
         p->readdatamutex = mutex_Create();
         if (!p->readdatamutex) {error = 1;}
-        p->readquitsignal = malloc(sizeof(*p->readquitsignal));
+        p->readquitsignal = malloc(sizeof(*(p->readquitsignal)));
         if (!p->readquitsignal) {error = 1;}
         p->readthreadinfo = thread_CreateInfo();
         if (!p->readthreadinfo) {error = 1;}
@@ -221,8 +223,7 @@ const char* line, void* userdata), void* userdata) {
 
 int execproc_Send(struct process* p, const char* line) {
 #ifdef UNIX
-    if (send(p->stdoutpipewrite, line, strlen(line),
-    MSG_NOSIGNAL) < 0) {
+    if (write(p->stdoutpipewrite, line, strlen(line)) < 0) {
         return 0;
     }
     return 1;
