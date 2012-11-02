@@ -46,18 +46,22 @@ struct process {
 #endif
 };
 
-int execproc_Run(const char* file, struct process* p) {
-    memset(p, 0, sizeof(*p));
+int execproc_Run(const char* file, const char* args,
+const char* workingdir, struct process** p) {
+    *p = malloc(sizeof(struct process));
+    memset(*p, 0, sizeof(**p));
 #ifdef UNIX
     // Unix process launcher
     // verify the file exists and is executable:
     if (!file_DoesFileExist(file) || file_IsDirectory(file)) {
+        free(*p);
         return EXECPROC_ERROR_NOSUCHFILE;
     }
 
     // do a read test:
     FILE* f = fopen(file, "rb");
     if (!f) {
+        free(*p);
         return EXECPROC_ERROR_CANNOTOPENFILE;
     }
     fclose(f);
@@ -66,11 +70,13 @@ int execproc_Run(const char* file, struct process* p) {
     int programtouspipe[2];
     int ustoprogrampipe[2];
     if (pipe2(programtouspipe, 0) != 0) {
+        free(*p);
         return EXECPROC_ERROR_CANNOTRUNFILE;
     }
     if (pipe2(ustoprogrampipe, 0) != 0) {
         close(programtouspipe[0]);
         close(programtouspipe[1]);
+        free(*p);
         return EXECPROC_ERROR_CANNOTRUNFILE;
     }
     // fork:
@@ -80,6 +86,7 @@ int execproc_Run(const char* file, struct process* p) {
         close(programtouspipe[1]);
         close(ustoprogrampipe[0]);
         close(ustoprogrampipe[1]);
+        free(*p);
         return EXECPROC_ERROR_CANNOTRUNFILE;
     } else if (pid == 0) {
         // child process, run program here:
@@ -92,9 +99,9 @@ int execproc_Run(const char* file, struct process* p) {
         exit(0);
     } else {
         // parent process
-        p->pid = pid;
-        p->stdinpiperead = programtouspipe[0];
-        p->stdoutpipewrite = ustoprogrampipe[1];
+        (*p)->pid = pid;
+        (*p)->stdinpiperead = programtouspipe[0];
+        (*p)->stdoutpipewrite = ustoprogrampipe[1];
         return 0;  // return success
     }
 #else
@@ -116,6 +123,7 @@ void execproc_ReadThread(void* userdata) {
             size_t oldlen = strlen(buf);
             if (oldlen > sizeof(buf)-2) {oldlen = sizeof(buf)-2;}
             int i = recv(readpipe, buf+oldlen, 1, 0);
+            printf("recv: %d\n", i);
             mutex_Lock(readdatamutex);
             if (*readquitsignal) {
                 // we are asked to terminate, so remove everything:
@@ -199,9 +207,9 @@ const char* line, void* userdata), void* userdata) {
         mutex_Lock(p->readdatamutex);
         spawnthread = 0;
     }
-    *p->readquitsignal = 0;
-    *p->readcallback = readcallback;
-    *p->readcallbackuserdata = userdata;
+    *(p->readquitsignal) = 0;
+    *(p->readcallback) = readcallback;
+    *(p->readcallbackuserdata) = userdata;
     if (spawnthread) {
         // spawn read thread
         thread_Spawn(p->readthreadinfo, &execproc_ReadThread, p);

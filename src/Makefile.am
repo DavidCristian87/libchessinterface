@@ -2,7 +2,7 @@
 ACLOCAL_AMFLAGS = -I m4
 
 lib_LTLIBRARIES = libchessinterface.la
-libchessinterface_la_SOURCES = execproc/execproc.c file/file.c threading/threading.c 
+libchessinterface_la_SOURCES = chessengine.c execproc/execproc.c file/file.c threading/threading.c 
 library_includedir=$(includedir)/chessinterface
 library_include_HEADERS=chessinterface.h
 

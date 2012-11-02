@@ -20,14 +20,24 @@
 #define EXECPROC_H_
 
 #include "os/os.h"
-#include "threading/threading.h"
 
 // Data struct containing info about a running external process:
 struct process;
 
 // Run an external process, and store the information about the running
 // process in the process struct:
-int execproc_Run(const char* file, struct process* p);
+int execproc_Run(const char* file, const char* args,
+const char* workingdir, struct process** p);
+// file:
+//   Path to the binary file you want to run.
+// args:
+//   Arguments you want to pass to the process, or NULL
+// workingdir:
+//   Working directory to be used by the process, or NULL
+// p:
+//   You provide a pointer which will be changed to point to
+//   a struct representing the process. If the return value
+//   of execproc_Run is NOT 0, the value of your pointer is undefined.
 // Returns 0 on success, or one of the following error codes:
 #define EXECPROC_ERROR_NOSUCHFILE -1  // file path doesn't lead to a file
 #define EXECPROC_ERROR_CANNOTOPENFILE -2  // cannot open the file

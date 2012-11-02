@@ -187,21 +187,21 @@ int timeInSeconds, int movesUntilIncrease, int increasePerMoveSeconds);
 // of the clock time.
 
 // Calculate initial move as current color:
-void chessinterface_Go(struct chessinterface* engine,
+void chessinterface_Go(struct chessinterfaceengine* engine,
 void (*movecallback)(const char* move, void* userdata), void* userdata);
 // The provided callback function will be called FROM ANOTHER THREAD
 // as soon as the engine finished calculating the move,
 // with the move and your provided userdata as parameters.
 
 // Pass user talk to the engine:
-void chessinterface_Usertalk(struct chessinterface* engine,
+void chessinterface_Usertalk(struct chessinterfaceengine* engine,
 const char* talk);
 // Please note the vast majority of engines will probably not
 // respond. However, I personally know of a chess engine with
 // chat functionality :)
 
 // Pass a move done by the user to the engine:
-void chessinterface_Usermove(struct chessinterface* engine,
+void chessinterface_Usermove(struct chessinterfaceengine* engine,
 const char* move,
 void (*movecallback)(const char* move, void* userdata), void* userdata);
 // Pass the user move to the engine to which the engine will respond
@@ -213,7 +213,8 @@ void (*movecallback)(const char* move, void* userdata), void* userdata);
 // The callback works similarly as for chessinterface_Go.
 
 // Update the clock time left:
-void chessinterface_UpdateClockTime(const chessinterface* engine,
+void chessinterface_UpdateClockTime(
+const struct chessinterfaceengine* engine,
 int engineSeconds, int userSeconds);
 // You should call this after the engine transmitted a move,
 // and instantly before you use chessinterface_Usermove or
@@ -224,14 +225,14 @@ int engineSeconds, int userSeconds);
 
 // Tell engine to move NOW (only does something if engine
 // is calculating a move):
-void chessinterface_MoveNow(struct chessinterface* engine);
+void chessinterface_MoveNow(struct chessinterfaceengine* engine);
 // Please note this only asks the engine to move as soon as possible,
 // however it doesn't force it to do so. Some engines might still
 // take a second or longer to react, and others might ignore your
 // request entirely.
 
 // Offer the engine a draw:
-void chessinterface_Userdraw(struct chessinterface* engine);
+void chessinterface_Userdraw(struct chessinterfaceengine* engine);
 // If the engine accepts the draw, it will call the draw
 // callback supplied with chessinterface_StartGame.
 // In that case, you may use chessinterface_Result to end
@@ -241,29 +242,25 @@ void chessinterface_Userdraw(struct chessinterface* engine);
 
 // Pause the game (only possible if engine is NOT calculating a move
 // right now, if it does please wait until you received it):
-void chessinterface_Pause(struct chessinterface* engine);
+void chessinterface_Pause(struct chessinterfaceengine* engine);
 // This simply tells the engine to pause its clocks.
 // As soon as you use chessinterface_Go() or chessinterface_Usermove()
 // the next time, the game will continue.
 
 // Set position to given FEN string.
-int chessinterface_SetFEN(struct chessinterface* engine,
+int chessinterface_SetFEN(struct chessinterfaceengine* engine,
 const char* fen);
 // Depending on the chess variant you play, you may need to
 // consult
 // http://http://www.open-aurec.com/wbforum/WinBoard/engine-intf.html
 // for the variant-specific alterations to FEN.
 // If a game is currently running, it will be paused (similar to
-// chessinterface_Pause).
-// Since the engine might be confused of the moves done and time left
-// after this command, use chessinterface_SetTimeControl again
-// when having changed the position.
-// Returns 0 if libchessinterface failed to set the position
-// (the engine might have rejected it), or 1 on success.
+// chessinterface_Pause) use chessinterface_Go/chessinterface_Usermove
+// to resume.
 
 // If you want, you can pass the engine the result
 // at the end of a match:
-void chessinterface_Result(struct chessinterface* engine,
+void chessinterface_Result(struct chessinterfaceengine* engine,
 const char* result);
 // For result, you can pass 0-1, 1-0 or 1-2/1-2.
 // You should do this instantly after either getting the
