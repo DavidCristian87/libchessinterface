@@ -8,26 +8,50 @@
 
 #include <chessinterface/chessinterface.h>
 
-static void engineLoadedCallback(const struct chessengineinfo* info,
+static volatile int probed = 0;
+
+static void engineLoadedCallback(struct chessinterfaceengine* engine,
+const struct chessengineinfo* info,
 void* userdata) {
-    printf("loadError: %s\n", info->loadError);
+    probed = 1;
+    if (info->loadError) {
+        printf("Failed to load engine.\n");
+        return;
+    }
+    printf("Engine protocol: %s\n", info->protocolType);
+    const char* const* p = info->engineInfo;
+    while (*p) {
+        printf("Engine info value: %s: %s\n", *p, *(p+1));
+        p += 2;
+    }
+    chessinterface_Close(engine);
 }
 
-static void engineCommunicationLogCallback(int outgoing, const char* line,
+static void engineCommunicationLogCallback(
+struct chessinterfaceengine* engine, int outgoing, const char* line,
 void* userdata) {
-
+    printf("Communication (%d): %s\n", outgoing, line);
 }
 
-int main(int arc, const char** argv) {
+int main(int argc, const char** argv) {
+    if (argc < 2) {
+        printf("Please specify an engine to probe.\n");
+        return 1;
+    }
+
     struct chessinterfaceengine* e = chessinterface_Open(
-        "/home/jonas/Develop/ildtiadar2/Ildtiadar2", "",
+        argv[1], "",
         NULL, NULL,
         &engineLoadedCallback,
         NULL,
         NULL,
         &engineCommunicationLogCallback,
+        NULL,
         NULL
     );
-    while (1) { }
+    while (!probed) {
+        
+    }
+    return 0;
 }
 

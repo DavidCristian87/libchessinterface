@@ -21,6 +21,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <unistd.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -34,7 +35,12 @@
 
 // Data struct containing info about a running process:
 struct process {
-    mutex* readdatamutex;
+    mutex* readdatamutex;  // mutex accessing for all the data here
+    mutex* freezereadthreadmutex;  // mutex locked by the read thread,
+         // and purely unlocked at good times for stopping.
+         // locking it e.g. from the main thread will halt the read
+         // thread safely, while you can then e.g. alter readquitsignal.
+    int aboutToQuit;
     int* readquitsignal;
     threadinfo* readthreadinfo;
     void (**readcallback)(struct process* p, const char* line,
@@ -43,6 +49,8 @@ struct process {
 #ifdef UNIX
     pid_t pid;
     int stdinpiperead,stdoutpipewrite;
+#else
+    HANDLE phandle;
 #endif
 };
 
@@ -79,6 +87,7 @@ const char* workingdir, struct process** p) {
         free(*p);
         return EXECPROC_ERROR_CANNOTRUNFILE;
     }
+
     // fork:
     pid_t pid = fork();
     if (pid < 0) {
@@ -114,66 +123,72 @@ void execproc_ReadThread(void* userdata) {
     int readpipe = p->stdinpiperead;
     int* readquitsignal = p->readquitsignal;
     mutex* readdatamutex = p->readdatamutex;
+    mutex* freezereadthreadmutex = p->freezereadthreadmutex;
     void (**readcallback)(struct process* p, const char* line,
     void* userdata) = p->readcallback;
     void** readcallbackuserdata = p->readcallbackuserdata;
+    mutex_Lock(freezereadthreadmutex);
+    char buf[256] = "";
     while (1) {
-        char buf[256] = "";
-        while (buf[strlen(buf)-1] != '\n') {
-            size_t oldlen = strlen(buf);
-            if (oldlen > sizeof(buf)-2) {oldlen = sizeof(buf)-2;}
-            int i = read(readpipe, buf+oldlen, 1);
-            mutex_Lock(readdatamutex);
-            if (*readquitsignal) {
-                // we are asked to terminate, so remove everything:
-                free(readquitsignal);
+        size_t oldlen = strlen(buf);
+        if (oldlen > sizeof(buf)-2) {oldlen = sizeof(buf)-2;}
+        mutex_Release(freezereadthreadmutex);
+        int i = read(readpipe, buf+oldlen, 1);
+        mutex_Lock(readdatamutex);
+        if (*readquitsignal) {
+            // we are asked to terminate, so remove everything:
+            free(readquitsignal);
+            mutex_Release(readdatamutex);
+            mutex_Destroy(readdatamutex);
+            free(readcallbackuserdata);
+            close(readpipe);
+            return;
+        }
+        mutex_Release(readdatamutex);
+        mutex_Lock(freezereadthreadmutex); // here, the thread can be paused.
+        mutex_Lock(readdatamutex);
+        if (i <= 0) {
+            // read error, process has closed? (or EOF)
+            void (*readcallbackvalue)(struct process*, const char*, void*) = *readcallback;
+            void* readcallbackuserdatavalue = *readcallbackuserdata;
+            mutex_Release(readdatamutex);
+            readcallbackvalue(p, NULL, readcallbackuserdatavalue);
+
+            // we can only terminate as soon as we get the quit signal:
+            while (1) {
+                usleep(1000 * 1000);  // sleep one second
+                mutex_Lock(readdatamutex);
+                if (*readquitsignal == 1) {
+                    free(readquitsignal);
+                    mutex_Release(readdatamutex);
+                    mutex_Destroy(readdatamutex);
+                    mutex_Release(freezereadthreadmutex);
+                    mutex_Destroy(freezereadthreadmutex);
+                    free(readcallbackuserdata);
+                    close(readpipe);      
+                    return;
+                }
                 mutex_Release(readdatamutex);
-                mutex_Destroy(readdatamutex);
-                free(readcallbackuserdata);
-                close(readpipe);
-                return;
             }
-            if (i <= 0) {
-                // read error, process has closed? (or EOF)
+        } else {
+            // data arrived. nullterminate string:
+            buf[oldlen+1] = 0;
+
+            // check if we have a complete line:
+            if (buf[oldlen] == '\n') {
+                // process line:
                 void (*readcallbackvalue)(struct process*, const char*, void*) = *readcallback;
                 void* readcallbackuserdatavalue = *readcallbackuserdata;
                 mutex_Release(readdatamutex);
-                readcallbackvalue(p, NULL, readcallbackuserdatavalue);
+                buf[oldlen] = 0;
+                readcallbackvalue(p, buf, readcallbackuserdatavalue);
 
-                // we can only terminate as soon as we get the quit signal:
-                while (1) {
-                    usleep(1000 * 1000);  // sleep one second
-                    mutex_Lock(readdatamutex);
-                    if (*readquitsignal == 1) {
-                        free(readquitsignal);
-                        mutex_Release(readdatamutex);
-                        mutex_Destroy(readdatamutex);
-                        free(readcallbackuserdata);
-                        close(readpipe);      
-                        return;
-                    }
-                    mutex_Release(readdatamutex);
-                }
-            } else {
-                // data arrived. nullterminate string:
-                buf[oldlen+1] = 0;
-
-                // check if we have a complete line:
-                if (buf[oldlen] == '\n') {
-                    // process line:
-                    void (*readcallbackvalue)(struct process*, const char*, void*) = *readcallback;
-                    void* readcallbackuserdatavalue = *readcallbackuserdata;
-                    mutex_Release(readdatamutex);
-                    buf[oldlen] = 0;
-                    readcallbackvalue(p, buf, readcallbackuserdatavalue);
-
-                    // clear buffer:
-                    buf[0] = 0;
-                    mutex_Lock(readdatamutex);
-                }
+                // clear buffer:
+                buf[0] = 0;
+                mutex_Lock(readdatamutex);
             }
-            mutex_Release(readdatamutex);
         }
+        mutex_Release(readdatamutex);
     }
 }
 
@@ -185,6 +200,8 @@ const char* line, void* userdata), void* userdata) {
         int error = 0;
         p->readdatamutex = mutex_Create();
         if (!p->readdatamutex) {error = 1;}
+        p->freezereadthreadmutex = mutex_Create();
+        if (!p->freezereadthreadmutex) {error = 1;}
         p->readquitsignal = malloc(sizeof(*(p->readquitsignal)));
         if (!p->readquitsignal) {error = 1;}
         p->readthreadinfo = thread_CreateInfo();
@@ -197,8 +214,10 @@ const char* line, void* userdata), void* userdata) {
             // we failed to create something, clean up:
             thread_FreeInfo(p->readthreadinfo);
             mutex_Destroy(p->readdatamutex);
+            mutex_Destroy(p->freezereadthreadmutex);
             free(p->readquitsignal);
             free(p->readcallbackuserdata);
+            p->freezereadthreadmutex = NULL;
             p->readquitsignal = NULL;
             p->readdatamutex = NULL;
             p->readthreadinfo = NULL;
@@ -233,20 +252,30 @@ int execproc_Send(struct process* p, const char* line) {
 }
 
 void execproc_Close(struct process* p) {
+    if (p->aboutToQuit) {return;}
+    p->aboutToQuit = 1;
 #ifdef UNIX
     close(p->stdinpiperead);
     close(p->stdoutpipewrite);
 #endif
     thread_FreeInfo(p->readthreadinfo);
 
+    // first, ensure read thread stops:
+    mutex_Lock(p->freezereadthreadmutex);
+
     // tell the read thread to quit:
     mutex_Lock(p->readdatamutex);
     *p->readquitsignal = 1;
     mutex_Release(p->readdatamutex);
 
+    // resume read thread:
+    mutex_Release(p->freezereadthreadmutex);
+
     // if the process is still running, stop it:
 #ifdef UNIX
-
+    kill(p->pid, SIGKILL);
+#else
+    TerminateProcess(p->phandle, 0);
 #endif
 
     // free struct:

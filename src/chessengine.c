@@ -16,6 +16,7 @@
 // along with libchessinterface in a file named COPYING.txt.
 // If not, see <http://www.gnu.org/licenses/>.
 
+#include <unistd.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -33,17 +34,30 @@ struct chessinterfaceengine {
     char* path;
     char* args;
     char* workingDirectory;
-    void (*loadedCallback)(const struct chessengineinfo* info,
+    void (*loadedCallback)(struct chessinterfaceengine* engine,
+      const struct chessengineinfo* info, void* userdata);
+    void (*communicationLogCallback)(struct chessinterfaceengine* engine,
+      int outgoing, const char* line, void* userdata);
+    void (*quitCallback)(struct chessinterfaceengine* engine,
       void* userdata);
-    void (*communicationLogCallback)(int outgoing, const char* line,
-      void* userdata);
+    int readFailure;
     void* userdata;
     int isLoaded;
     int detectionState;
+    int closeDownLaunchThread;
+    int launchThreadIsRunning;
 };
-#define DETECTIONSTATE_PROBING_UCI 1
 
-static void sendline(struct chessinterfaceengine* cie, const char* line, ...) {
+#define DETECTIONSTATE_NONE 0
+#define DETECTIONSTATE_PROBING_UCI 1
+#define DETECTIONSTATE_PROBING_NOT_UCI 2
+#define DETECTIONSTATE_PROBING_WINBOARD_2 3
+#define DETECTIONSTATE_PROBING_WINBOARD_2_OPTIONS 4
+
+static int sendline(struct chessinterfaceengine* cie, const char* line, ...) {
+    if (!line) {
+        return 0;
+    }
     char linebuf[1024];
     va_list ap;
     va_start(ap, line);
@@ -51,23 +65,148 @@ static void sendline(struct chessinterfaceengine* cie, const char* line, ...) {
     if (strlen(linebuf) < sizeof(linebuf) - 2) {
         strcat(linebuf, "\r\n");
     }
-    cie->communicationLogCallback(1, line, cie->userdata);
-    execproc_Send(cie->p, linebuf);
+    void (*communicationLogCallback)(struct chessinterfaceengine* engine,
+      int outgoing, const char* line, void* userdata) =
+    cie->communicationLogCallback;
+    mutex_Release(cie->accesslock);
+    if (communicationLogCallback) {
+        communicationLogCallback(cie, 1, line, cie->userdata);
+    }
+    mutex_Lock(cie->accesslock);
+    return execproc_Send(cie->p, linebuf);
+}
+
+static void freesettingsarray(char** a) {
+    while (*a) {
+        free(*a);
+        a++;
+    }
+}
+
+static void engineHasQuit(struct chessinterfaceengine* cie) {
+    if (!cie->isLoaded) {
+        // engine wasn't loaded yet, report loading failure
+        struct chessengineinfo* i = &cie->i;
+        cie->i.loadError = strdup("Engine shutdown unexpectedly");
+        mutex_Release(cie->accesslock);
+        void (*loadedCallback)(struct chessinterfaceengine* engine,
+          const struct chessengineinfo*, void*) =
+        cie->loadedCallback;
+        void* userdata = cie->userdata;
+        mutex_Release(cie->accesslock);
+        if (loadedCallback) {
+            loadedCallback(cie, i, userdata);
+        }
+    } else {
+        // engine was already loaded, report quit event
+        void (*quitCallback)(struct chessinterfaceengine* engine,
+          void*) = cie->quitCallback;
+        void* userdata = cie->userdata;
+        mutex_Release(cie->accesslock);
+        if (quitCallback) {
+            quitCallback(cie, userdata);
+        }
+    }
+    mutex_Lock(cie->accesslock);
 }
 
 static void readcallback(struct process* p, const char* line,
 void* userdata) {
     struct chessinterfaceengine* cie = userdata;
     mutex_Lock(cie->accesslock);
-    if (!line && !cie->isLoaded) {
-        struct chessengineinfo* i = &cie->i;
-        cie->i.loadError = strdup("Engine shutdown unexpectedly");
+    if (!line) {
+        // read failure
+        cie->readFailure = 1;
+        engineHasQuit(cie);
         mutex_Release(cie->accesslock);
-        cie->loadedCallback(i, cie->userdata);
         return;
     }
-    printf("Line received: \"%s\"\n", line);
+    void (*communicationLogCallback)(struct chessinterfaceengine* engine,
+      int outgoing, const char* line, void* userdata) =
+    cie->communicationLogCallback;
     mutex_Release(cie->accesslock);
+    if (communicationLogCallback) {
+        communicationLogCallback(cie, 0, line, cie->userdata);
+    }
+    mutex_Lock(cie->accesslock);
+    if (!cie->isLoaded &&
+    cie->detectionState == DETECTIONSTATE_PROBING_UCI) {
+        // positive match for UCI:
+        if (strcasecmp(line, "uciok") == 0) {
+            cie->i.protocolType = strdup("uci1");
+            int infoCount = 2;
+            char** infoArray = malloc(sizeof(char*)*(infoCount*2+1));
+            infoArray[infoCount*2] = 0;
+            infoArray[0] = strdup("Variants");
+            infoArray[1] = strdup("normal");
+            infoArray[2] = strdup("SAN");
+            infoArray[3] = strdup("0");
+            cie->i.engineInfo = (const char* const*)infoArray;
+            void (*loadedCallback)(struct chessinterfaceengine* engine,
+              const struct chessengineinfo* info, void* userdata) =
+            cie->loadedCallback;
+            mutex_Release(cie->accesslock);
+            if (loadedCallback) {
+                loadedCallback(cie, &(cie->i), cie->userdata);
+            }
+            mutex_Lock(cie->accesslock);
+            freesettingsarray(infoArray);
+            return;
+        }
+
+        // negative match for UCI:
+        if (strstr(line, "id ") != line && strstr(line, "option ") != line
+        && (strstr(line, "illlegal") || strstr(line, "Illegal")) && strstr(line, "uci")) {
+            // engine most likely reports "uci" is not a valid move -> not uci
+            cie->detectionState = DETECTIONSTATE_PROBING_NOT_UCI;
+        }
+    }
+    if (!cie->isLoaded &&
+    cie->detectionState == DETECTIONSTATE_PROBING_WINBOARD_2) {
+        // positive match for winboard:
+        if (strstr(line, "feature ") == line) {
+            cie->detectionState = DETECTIONSTATE_PROBING_WINBOARD_2_OPTIONS;
+        }
+    }
+    if (!cie->isLoaded &&
+    cie->detectionState == DETECTIONSTATE_PROBING_WINBOARD_2_OPTIONS) {
+        // parse CECPv2 options:
+        if (strstr(line, "feature ") == line) {
+            if (strstr(line, " done=1")) {
+                cie->i.protocolType = strdup("cecp2");
+                int infoCount = 2;
+                char** infoArray = malloc(sizeof(char*)*(infoCount*2+1));
+                infoArray[infoCount*2] = 0;
+                infoArray[0] = strdup("Variants");
+                infoArray[1] = strdup("normal");
+                infoArray[2] = strdup("SAN");
+                infoArray[3] = strdup("0");
+                cie->i.engineInfo = (const char* const*)infoArray;
+                void (*loadedCallback)(struct chessinterfaceengine* engine,
+                  const struct chessengineinfo* info, void* userdata) =
+                cie->loadedCallback;
+                mutex_Release(cie->accesslock);
+                if (loadedCallback) {
+                    loadedCallback(cie, &(cie->i), cie->userdata);
+                }
+                mutex_Lock(cie->accesslock);
+                freesettingsarray(infoArray);
+                return;
+            }
+        }
+    }
+    mutex_Release(cie->accesslock);
+}
+
+static int checklaunchshutdown(struct chessinterfaceengine* cie) {
+    mutex_Lock(cie->accesslock);
+    if (cie->closeDownLaunchThread) {
+        cie->launchThreadIsRunning = 0;
+        mutex_Release(cie->accesslock);
+        return 1;
+    }
+    mutex_Release(cie->accesslock);
+    return 0;
 }
 
 // This function will run in the thread that launches the engine:
@@ -76,7 +215,9 @@ static void chessinterfacelaunchthread(void* userdata) {
     int i = execproc_Run(cie->path, cie->args,
     cie->workingDirectory, &(cie->p));
     memset(&(cie->i), 0, sizeof(cie->i));
-    printf("execproc_Run(%d);\n", i);
+    void (*loadedCallback)(struct chessinterfaceengine* engine,
+      const struct chessengineinfo* info, void* userdata) =
+    cie->loadedCallback;
     if (i != 0) {
         switch (i) {
         case EXECPROC_ERROR_NOSUCHFILE:
@@ -91,26 +232,122 @@ static void chessinterfacelaunchthread(void* userdata) {
         default:
             cie->i.loadError = strdup("Unknown error");
         }
-        cie->loadedCallback(&(cie->i), cie->userdata);
+        cie->launchThreadIsRunning = 0;
+        loadedCallback(cie, &(cie->i), cie->userdata);
         return;
     }
+    mutex_Lock(cie->accesslock);
     if (!sendline(cie, "uci")) {
+        cie->launchThreadIsRunning = 0;
         cie->i.loadError = strdup("Cannot send data to engine");
-        ci->loadedCallback(&(cie->i), cie->userdata);
+        mutex_Release(cie->accesslock);
+        loadedCallback(cie, &(cie->i), cie->userdata);
         return;
     }
+
+    // probe for UCI:
     cie->detectionState = DETECTIONSTATE_PROBING_UCI;
-    execproc_Read(cie->p, readcallback, cie);
+    struct process* p = cie->p;
+    mutex_Release(cie->accesslock);
+    execproc_Read(p, readcallback, cie);  // run engine
+
+    if (checklaunchshutdown(cie)) {return;}
+
+    // wait a maximum of 3 seconds for UCI probing:
+    i = 30;
+    int isuci = 0;
+    while (i > 0) {
+#ifdef UNIX
+        usleep(100 * 1000);
+#else
+        Sleep(100);
+#endif
+        mutex_Lock(cie->accesslock);
+        if (cie->isLoaded) {
+            isuci = 1;
+            break;
+        }
+        if (cie->detectionState == DETECTIONSTATE_PROBING_NOT_UCI) {
+            break;
+        }
+        if (i > 1) {
+            mutex_Release(cie->accesslock);
+            if (checklaunchshutdown(cie)) {return;}
+        }
+        i--;
+    }
+
+    // if not UCI, probe for winboard:
+    if (!isuci) {
+        cie->detectionState = DETECTIONSTATE_PROBING_WINBOARD_2;
+        if (!sendline(cie, "xboard\r\nprotover 2")) {
+            cie->launchThreadIsRunning = 0;
+            cie->i.loadError = strdup("Cannot send data to engine");
+            mutex_Release(cie->accesslock);
+            loadedCallback(cie, &(cie->i), cie->userdata);
+            return;
+        }
+        mutex_Release(cie->accesslock);
+
+        // wait a maximum of 3 seconds for winboard 2 probing:
+        i = 30;
+        int iscecp2 = 0;
+        while (i > 0) {
+#ifdef UNIX
+            usleep(100 * 1000);
+#else
+            Sleep(100);
+#endif
+            mutex_Lock(cie->accesslock);
+            if (cie->isLoaded || cie->detectionState !=
+            DETECTIONSTATE_PROBING_WINBOARD_2) {
+                iscecp2 = 1;
+                break;
+            }
+            if (i > 1) {
+                mutex_Release(cie->accesslock);
+                if (checklaunchshutdown(cie)) {return;}
+            }
+            i--;
+        }
+        if (!iscecp2) {
+            // load as legacy winboard engine
+            cie->i.protocolType = strdup("cecp1");
+            int infoCount = 2;
+            char** infoArray = malloc(sizeof(char*)*(infoCount*2+1));
+            infoArray[infoCount*2] = 0;
+            infoArray[0] = strdup("Variants");
+            infoArray[1] = strdup("normal");
+            infoArray[2] = strdup("SAN");
+            infoArray[3] = strdup("0");
+            cie->i.engineInfo = (const char* const*)infoArray;
+            void (*loadedCallback)(struct chessinterfaceengine* engine,
+              const struct chessengineinfo* info, void* userdata) =
+            cie->loadedCallback;
+            mutex_Release(cie->accesslock);
+            if (loadedCallback) {
+                loadedCallback(cie, &(cie->i), cie->userdata);
+            }
+            mutex_Lock(cie->accesslock);
+            freesettingsarray(infoArray);
+        }
+    }
+    cie->launchThreadIsRunning = 0; 
+    mutex_Release(cie->accesslock);
 }
 
 struct chessinterfaceengine* chessinterface_Open(const char* path,
 const char* args, const char* workingDirectory,
 const char* const* protocolOptions,
-void (*engineLoadedCallback)(const struct chessengineinfo* info,
-  void* userdata),
-void (*engineErrorCallback)(const char* error, void* userdata),
-void (*engineTalkCallback)(const char* talk, void* userdata),
-void (*engineCommunicationLogCallback)(int outgoing, const char* line,
+void (*engineLoadedCallback)(struct chessinterfaceengine* engine,
+  const struct chessengineinfo* info, void* userdata),
+void (*engineErrorCallback)(struct chessinterfaceengine* engine,
+  const char* error, void* userdata),
+void (*engineTalkCallback)(struct chessinterfaceengine* engine,
+  const char* talk, void* userdata),
+void (*engineCommunicationLogCallback)(struct chessinterfaceengine* engine,
+  int outgoing, const char* line, void* userdata),
+void (*engineQuitCallback)(struct chessinterfaceengine* engine,
   void* userdata),
 void* userdata) {
     struct chessinterfaceengine* cie = malloc(sizeof(*cie));
@@ -127,9 +364,11 @@ void* userdata) {
         free(cie);
         return NULL;
     }
+    cie->launchThreadIsRunning = 1;
     cie->userdata = userdata;
     cie->loadedCallback = engineLoadedCallback;
     cie->communicationLogCallback = engineCommunicationLogCallback;
+    cie->quitCallback = engineQuitCallback;
     if (args) {
         cie->args = strdup(args);
     }
@@ -140,3 +379,61 @@ void* userdata) {
     thread_Spawn(NULL, chessinterfacelaunchthread, cie);
     return cie;
 }
+
+static void chessinterface_CloseThread(void* d) {
+    // this completes the closedown process in a separate thread
+    // to do it in parallel
+
+    struct chessinterfaceengine* cie = d;
+
+    // instruct launch thread to close down if running:
+    mutex_Lock(cie->accesslock);
+    if (cie->launchThreadIsRunning) {
+        cie->closeDownLaunchThread = 1;
+        mutex_Release(cie->accesslock);
+        
+        // wait for launch thread to terminate:
+        while (1) {
+            mutex_Lock(cie->accesslock);
+            if (!cie->launchThreadIsRunning) {
+                break;
+            }
+            mutex_Release(cie->accesslock);
+#ifdef UNIX
+            usleep(500 * 1000);
+#else
+            Sleep(500);
+#endif
+        }
+    }
+
+    // by now, no read callbacks or launch thread
+    // should be running.
+
+    // quit event:
+    if (!cie->readFailure) {
+        engineHasQuit(cie);
+    }
+
+    // free things:
+    mutex_Release(cie->accesslock);
+    free(cie->args);
+    free(cie->workingDirectory);
+    free(cie->path);
+}
+
+void chessinterface_Close(struct chessinterfaceengine* cie) {
+    mutex_Lock(cie->accesslock);
+    struct process* p = cie->p;
+    cie->detectionState = DETECTIONSTATE_NONE;
+    mutex_Release(cie->accesslock);
+
+    // close down read callbacks:
+    execproc_Close(cie->p);
+    mutex_Lock(cie->accesslock);
+
+    // do remaining things asynchronously because shutting down
+    // the launch thread might not be instant:
+    thread_Spawn(NULL, &chessinterface_CloseThread, cie);
+}
+

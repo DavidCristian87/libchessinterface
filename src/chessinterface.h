@@ -36,11 +36,11 @@ struct chessinterfaceengine;
 // This struct contains retrieved information about a launched engine:
 struct chessengineinfo {
     // possible loading problems:
-    char* loadError;  // if not NULL, the engine failed to load!
+    const char* loadError;  // if not NULL, the engine failed to load!
 
     // the following options only have proper values if loadError is NULL:
-    char* protocolType;  // "cecp1", "cecp2", "uci1"
-    char** engineInfo;
+    const char* protocolType;  // "cecp1", "cecp2", "uci1"
+    const char* const* engineInfo;
       // A null-terminated list of info name/value pairs.
       // May be NULL if loadError is specified/not NULL.
       // Supported values (not necessarily all present/in that order):
@@ -75,11 +75,15 @@ int chessinterface_GetMajorLibVersion();  // The X in X.5 (1 in v1.5)
 struct chessinterfaceengine* chessinterface_Open(const char* path,
 const char* args, const char* workingDirectory,
 const char* const* protocolOptions,
-void (*engineLoadedCallback)(const struct chessengineinfo* info,
-  void* userdata),
-void (*engineErrorCallback)(const char* error, void* userdata),
-void (*engineTalkCallback)(const char* talk, void* userdata),
-void (*engineCommunicationLogCallback)(int outgoing, const char* line,
+void (*engineLoadedCallback)(struct chessinterfaceengine* engine,
+  const struct chessengineinfo* info, void* userdata),
+void (*engineErrorCallback)(struct chessinterfaceengine* engine,
+  const char* error, void* userdata),
+void (*engineTalkCallback)(struct chessinterfaceengine* engine,
+  const char* talk, void* userdata),
+void (*engineCommunicationLogCallback)(struct chessinterfaceengine* engine,
+  int outgoing, const char* line, void* userdata),
+void (*engineQuitCallback)(struct chessinterfaceengine* engine,
   void* userdata),
 void* userdata);
 // Return value: a chess interface engine struct pointer.
@@ -130,6 +134,11 @@ void* userdata);
 //   every line sent to (outgoing = 1) or received from (outgoing = 0)
 //   the engine. This may be useful to an engine programmer who
 //   wishes to debug their engine using your GUI.
+// engineQuitCallback:
+//   If the engineLoadedCallback has already been called with success
+//   (no loadError), the engine will be up and running, but at some
+//   point it might obviously quit. In that case, this callback will
+//   be called if provided.
 // userdata:
 //   This userdata will be provided to all of your callbacks.
 
@@ -266,9 +275,6 @@ const char* result);
 // You should do this instantly after either getting the
 // engine move that ends the game or after sending the user move
 // with chessinterface_Usermove() that ends the game.
-
-// Free a chess engine info struct that was passed to you:
-void chessinterface_FreeEngineInfo(struct chessengineinfo* cinfo);
 
 // Close a chess engine:
 void chessinterface_Close(struct chessinterfaceengine* engine);

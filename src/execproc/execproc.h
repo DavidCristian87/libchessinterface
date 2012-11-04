@@ -76,14 +76,17 @@ void execproc_Close(struct process* p);
 // This must be used either after execproc_Send or execproc_Read
 // gave you failure (which means the process has closed by itself),
 // or when you wish the process to be closed on your behalf.
+//
 // If you want to close the process on your behalf and you just
 // used execproc_Send to send a command to it to indicate it should
 // close, you should probably wait a second or so before calling
 // execproc_Close which will force it to close down.
-// On Windows, the process is instantly terminated.
-// On Linux, SIGTERM is sent and after 2 seconds, SIGKILL will be sent
-// (this happens in another thread, so this call won't hang your
-// program for 2 seconds before returning).
+//
+// WARNING: It is possible the read callback is still called 1+ times
+// while this function call runs. In those callback calls, you must NOT
+// call execproc_Close recursively or you will break things.
+// As soon as execproc_Close terminates, there is guaranteed to be
+// no callback still running.
 
 #endif  // EXECPROC_H_
 
