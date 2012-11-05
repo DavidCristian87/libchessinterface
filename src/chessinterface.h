@@ -197,10 +197,12 @@ int timeInSeconds, int movesUntilIncrease, int increasePerMoveSeconds);
 
 // Calculate initial move as current color:
 void chessinterface_Go(struct chessinterfaceengine* engine,
-void (*movecallback)(const char* move, void* userdata), void* userdata);
+int (*movecallback)(const char* move, void* userdata), void* userdata);
 // The provided callback function will be called FROM ANOTHER THREAD
 // as soon as the engine finished calculating the move,
 // with the move and your provided userdata as parameters.
+// Your move callback should return 1 if the move was valid and accepted,
+// or 0 if it was invalid.
 
 // Pass user talk to the engine:
 void chessinterface_Usertalk(struct chessinterfaceengine* engine,
@@ -212,7 +214,7 @@ const char* talk);
 // Pass a move done by the user to the engine:
 void chessinterface_Usermove(struct chessinterfaceengine* engine,
 const char* move,
-void (*movecallback)(const char* move, void* userdata), void* userdata);
+int (*movecallback)(const char* move, void* userdata), void* userdata);
 // Pass the user move to the engine to which the engine will respond
 // with its move.
 // The move must be done as Coordinate Algebraic Notation (a2a3 etc)
