@@ -34,6 +34,16 @@ if [ test -z "$AR" ]; then
     exit 1
 fi
 
+AC_PREFIX_DEFAULT([/usr])
+
+AS_IF([test "x$libdir" = "x\${exec_prefix}/lib"],[
+    dnl Since default libdir wasn't changed, set to lib64 if on 64bit
+    ARCH="`uname -m`"
+    AS_IF([test "x$ARCH" = xx86_64], [
+        libdir="\${exec_prefix}/lib64"
+    ])
+])
+
 # OS dependant things:
 AS_IF([test -z "$maybeos"],[
 # UNIX (Linux/Mac OS X)

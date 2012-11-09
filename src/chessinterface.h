@@ -39,7 +39,7 @@ struct chessengineinfo {
     const char* loadError;  // if not NULL, the engine failed to load!
 
     // the following options only have proper values if loadError is NULL:
-    const char* protocolType;  // "cecp1", "cecp2", "uci1"
+    const char* protocolType;  // "cecp1", "cecp2", "uci"
     const char* const* engineInfo;
       // A null-terminated list of info name/value pairs.
       // May be NULL if loadError is specified/not NULL.

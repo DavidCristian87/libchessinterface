@@ -111,6 +111,7 @@ const char* workingdir, struct process** p) {
         (*p)->pid = pid;
         (*p)->stdinpiperead = programtouspipe[0];
         (*p)->stdoutpipewrite = ustoprogrampipe[1];
+
         return 0;  // return success
     }
 #else

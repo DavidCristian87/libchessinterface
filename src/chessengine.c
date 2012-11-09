@@ -22,37 +22,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "protocolexceptions.h"
 #include "threading/threading.h"
 #include "chessinterface.h"
 #include "execproc/execproc.h"
-
-// This struct will be used by the thread launching the engine:
-struct chessinterfaceengine {
-    mutex* accesslock;
-    struct process* p;
-    struct chessengineinfo i;
-    char* path;
-    char* args;
-    char* workingDirectory;
-    void (*loadedCallback)(struct chessinterfaceengine* engine,
-      const struct chessengineinfo* info, void* userdata);
-    void (*communicationLogCallback)(struct chessinterfaceengine* engine,
-      int outgoing, const char* line, void* userdata);
-    void (*quitCallback)(struct chessinterfaceengine* engine,
-      void* userdata);
-    int readFailure;
-    void* userdata;
-    int isLoaded;
-    int detectionState;
-    int closeDownLaunchThread;
-    int launchThreadIsRunning;
-};
-
-#define DETECTIONSTATE_NONE 0
-#define DETECTIONSTATE_PROBING_UCI 1
-#define DETECTIONSTATE_PROBING_NOT_UCI 2
-#define DETECTIONSTATE_PROBING_WINBOARD_2 3
-#define DETECTIONSTATE_PROBING_WINBOARD_2_OPTIONS 4
+#include "chessinterfaceengine.h"
 
 static int sendline(struct chessinterfaceengine* cie, const char* line, ...) {
     if (!line) {
@@ -63,7 +37,13 @@ static int sendline(struct chessinterfaceengine* cie, const char* line, ...) {
     va_start(ap, line);
     vsnprintf(linebuf, sizeof(linebuf), line, ap);
     if (strlen(linebuf) < sizeof(linebuf) - 2) {
+#ifdef UNIX
+        // some linux engines break when we use \r\n
+        strcat(linebuf, "\n");
+#else
+        // for windows, use \r\n
         strcat(linebuf, "\r\n");
+#endif
     }
     void (*communicationLogCallback)(struct chessinterfaceengine* engine,
       int outgoing, const char* line, void* userdata) =
@@ -133,7 +113,7 @@ void* userdata) {
     cie->detectionState == DETECTIONSTATE_PROBING_UCI) {
         // positive match for UCI:
         if (strcasecmp(line, "uciok") == 0) {
-            cie->i.protocolType = strdup("uci1");
+            cie->i.protocolType = strdup("uci");
             int infoCount = 2;
             char** infoArray = malloc(sizeof(char*)*(infoCount*2+1));
             infoArray[infoCount*2] = 0;
@@ -212,6 +192,11 @@ static int checklaunchshutdown(struct chessinterfaceengine* cie) {
 // This function will run in the thread that launches the engine:
 static void chessinterfacelaunchthread(void* userdata) {
     struct chessinterfaceengine* cie = userdata;
+
+    // protocol exceptions:
+    protocolexceptions_SetByBinName(cie, cie->path);
+
+    // launch process:
     int i = execproc_Run(cie->path, cie->args,
     cie->workingDirectory, &(cie->p));
     memset(&(cie->i), 0, sizeof(cie->i));
@@ -236,45 +221,63 @@ static void chessinterfacelaunchthread(void* userdata) {
         loadedCallback(cie, &(cie->i), cie->userdata);
         return;
     }
-    mutex_Lock(cie->accesslock);
-    if (!sendline(cie, "uci")) {
-        cie->launchThreadIsRunning = 0;
-        cie->i.loadError = strdup("Cannot send data to engine");
-        mutex_Release(cie->accesslock);
-        loadedCallback(cie, &(cie->i), cie->userdata);
-        return;
-    }
+
+    // launch read thread:
+    execproc_Read(cie->p, readcallback, cie);  // run engine
+
+    // allow engine to start:
+#ifdef UNIX
+    usleep(100 * 1000);
+#else
+    Sleep(100);
+#endif
+
+    if (checklaunchshutdown(cie)) {return;}
 
     // probe for UCI:
-    cie->detectionState = DETECTIONSTATE_PROBING_UCI;
-    struct process* p = cie->p;
+    mutex_Lock(cie->accesslock);
+    int detectuci = 1;
+    if (cie->skipuci) {
+        detectuci = 0;
+    }
+    if (detectuci) {
+        cie->detectionState = DETECTIONSTATE_PROBING_UCI;
+        if (!sendline(cie, "uci")) {
+            cie->launchThreadIsRunning = 0;
+            cie->i.loadError = strdup("Cannot send data to engine");
+            mutex_Release(cie->accesslock);
+            loadedCallback(cie, &(cie->i), cie->userdata);
+            return;
+        }
+    }
     mutex_Release(cie->accesslock);
-    execproc_Read(p, readcallback, cie);  // run engine
 
     if (checklaunchshutdown(cie)) {return;}
 
     // wait a maximum of 3 seconds for UCI probing:
-    i = 30;
     int isuci = 0;
-    while (i > 0) {
+    if (detectuci) {
+        i = 30;
+        while (i > 0) {
 #ifdef UNIX
-        usleep(100 * 1000);
+            usleep(100 * 1000);
 #else
-        Sleep(100);
+            Sleep(100);
 #endif
-        mutex_Lock(cie->accesslock);
-        if (cie->isLoaded) {
-            isuci = 1;
-            break;
+            mutex_Lock(cie->accesslock);
+            if (cie->isLoaded) {
+                isuci = 1;
+                break;
+            }
+            if (cie->detectionState == DETECTIONSTATE_PROBING_NOT_UCI) {
+                break;
+            }
+            if (i > 1) {
+                mutex_Release(cie->accesslock);
+                if (checklaunchshutdown(cie)) {return;}
+            }
+            i--;
         }
-        if (cie->detectionState == DETECTIONSTATE_PROBING_NOT_UCI) {
-            break;
-        }
-        if (i > 1) {
-            mutex_Release(cie->accesslock);
-            if (checklaunchshutdown(cie)) {return;}
-        }
-        i--;
     }
 
     // if not UCI, probe for winboard:
