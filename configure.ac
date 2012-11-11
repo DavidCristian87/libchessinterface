@@ -19,7 +19,7 @@
 AC_PREREQ([2.60])
 
 AC_INIT([libchessinterface], [1.0], [jonasthiem@googlemail.com])
-LT_INIT([win32-dll])
+LT_INIT([dlopen win32-dll])
 
 AM_INIT_AUTOMAKE([foreign])
 AC_PROG_CC
@@ -27,6 +27,8 @@ AC_PROG_CXX
 AC_PROG_MAKE_SET
 AC_PROG_OBJC
 AC_CANONICAL_HOST
+AC_DISABLE_STATIC
+AC_ENABLE_SHARED
 AC_CONFIG_MACRO_DIR([m4])
 AC_CHECK_TOOL(AR, ar)
 if [ test -z "$AR" ]; then
@@ -37,12 +39,16 @@ fi
 AC_PREFIX_DEFAULT([/usr])
 
 AS_IF([test "x$libdir" = "x\${exec_prefix}/lib"],[
-    dnl Since default libdir wasn't changed, set to lib64 if on 64bit
+    # Since default libdir wasn't changed, set to lib64 if on 64bit
     ARCH="`uname -m`"
     AS_IF([test "x$ARCH" = xx86_64], [
         libdir="\${exec_prefix}/lib64"
     ])
 ])
+
+# Check whether target os is windows:
+maybeos=`echo $EXEEXT | grep exe`
+AM_CONDITIONAL(WINDOWS_OS, [test -n "$maybeos"])
 
 # OS dependant things:
 AS_IF([test -z "$maybeos"],[
@@ -86,6 +92,8 @@ AS_IF([test -z "$maybeos"],[
     AC_CHECK_HEADERS([windows.h string.h stdio.h unistd.h],,AC_MSG_ERROR(Cannot find all the necessary headers. Try to install the necessary libraries and headers))
 
 ])
+
+AC_SUBST(EXEEXT)
 
 AC_CONFIG_FILES([Makefile
                  src/Makefile])

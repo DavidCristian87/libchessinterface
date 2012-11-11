@@ -26,6 +26,10 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#else
+#include <windows.h>
+#include <unistd.h>
+#include <stdio.h>
 #endif
 #include <string.h>
 
@@ -48,23 +52,24 @@ struct process {
     void** readcallbackuserdata;
 #ifdef UNIX
     pid_t pid;
-    int stdinpiperead,stdoutpipewrite;
 #else
     HANDLE phandle;
 #endif
+    int stdinpiperead,stdoutpipewrite;
 };
 
 int execproc_Run(const char* file, const char* args,
 const char* workingdir, struct process** p) {
     *p = malloc(sizeof(struct process));
     memset(*p, 0, sizeof(**p));
-#ifdef UNIX
-    // Unix process launcher
     // verify the file exists and is executable:
     if (!file_DoesFileExist(file) || file_IsDirectory(file)) {
         free(*p);
         return EXECPROC_ERROR_NOSUCHFILE;
     }
+
+#ifdef UNIX
+    // Unix process launcher
 
     // do a read test:
     FILE* f = fopen(file, "rb");
@@ -102,6 +107,9 @@ const char* workingdir, struct process** p) {
         dup2(programtouspipe[1], STDOUT_FILENO);
         dup2(ustoprogrampipe[0], STDIN_FILENO);
         const char* argv[] = { file, NULL };
+        if (workingdir) {
+            file_Cwd(workingdir);
+        }
         if (execv(file, (char* const*) argv) < 0) {
             exit(1);
         }
@@ -115,7 +123,26 @@ const char* workingdir, struct process** p) {
         return 0;  // return success
     }
 #else
-
+    STARTUPINFO si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    memset(&pi, 0, sizeof(pi));
+    char fpath[512];
+    unsigned int i = strlen(file);
+    if (i > sizeof(fpath)-1) {i = sizeof(fpath)-1;}
+    memcpy(fpath, file, i);
+    fpath[i] = 0;
+    if (!CreateProcess(NULL,
+        fpath, NULL, NULL,
+        FALSE, NORMAL_PRIORITY_CLASS,
+        NULL,
+        workingdir,
+        &si, &pi
+    )) {
+       return EXECPROC_ERROR_CANNOTRUNFILE;
+    }
+    return 0;
 #endif
 }
 
@@ -160,6 +187,7 @@ void execproc_ReadThread(void* userdata) {
                 usleep(1000 * 1000);  // sleep one second
                 mutex_Lock(readdatamutex);
                 if (*readquitsignal == 1) {
+                    printf("read thread shutting down\n");
                     free(readquitsignal);
                     mutex_Release(readdatamutex);
                     mutex_Destroy(readdatamutex);
@@ -242,23 +270,18 @@ const char* line, void* userdata), void* userdata) {
 }
 
 int execproc_Send(struct process* p, const char* line) {
-#ifdef UNIX
     if (write(p->stdoutpipewrite, line, strlen(line)) < 0) {
         return 0;
     }
     return 1;
-#else
-
-#endif
 }
 
 void execproc_Close(struct process* p) {
     if (p->aboutToQuit) {return;}
+    printf("closing engine\n");
     p->aboutToQuit = 1;
-#ifdef UNIX
     close(p->stdinpiperead);
     close(p->stdoutpipewrite);
-#endif
     thread_FreeInfo(p->readthreadinfo);
 
     // first, ensure read thread stops:

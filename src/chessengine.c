@@ -16,11 +16,15 @@
 // along with libchessinterface in a file named COPYING.txt.
 // If not, see <http://www.gnu.org/licenses/>.
 
+#include "os/os.h"
 #include <unistd.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef WINDOWS
+#include <windows.h>
+#endif
 
 #include "protocolexceptions.h"
 #include "threading/threading.h"
@@ -113,6 +117,7 @@ void* userdata) {
     cie->detectionState == DETECTIONSTATE_PROBING_UCI) {
         // positive match for UCI:
         if (strcasecmp(line, "uciok") == 0) {
+            cie->isLoaded = 1;
             cie->i.protocolType = strdup("uci");
             int infoCount = 2;
             char** infoArray = malloc(sizeof(char*)*(infoCount*2+1));
@@ -142,6 +147,33 @@ void* userdata) {
         }
     }
     if (!cie->isLoaded &&
+    cie->detectionState == DETECTIONSTATE_PROBING_WINBOARD_1) {
+        // a move would be a positive match for winboard 1:
+        if (strlen(line) >= 4 && line[0] >= 'a' && line[0] <= 'h'
+        && line[1] >= '1' && line[1] <= '8') {
+            // load as legacy winboard engine
+            cie->isLoaded = 1;
+            cie->i.protocolType = strdup("cecp1");
+            int infoCount = 2;
+            char** infoArray = malloc(sizeof(char*)*(infoCount*2+1));
+            infoArray[infoCount*2] = 0;
+            infoArray[0] = strdup("Variants");
+            infoArray[1] = strdup("normal");
+            infoArray[2] = strdup("SAN");
+            infoArray[3] = strdup("0");
+            cie->i.engineInfo = (const char* const*)infoArray;
+            void (*loadedCallback)(struct chessinterfaceengine* engine,
+              const struct chessengineinfo* info, void* userdata) =
+            cie->loadedCallback;
+            mutex_Release(cie->accesslock);
+            if (loadedCallback) {
+                loadedCallback(cie, &(cie->i), cie->userdata);
+            }
+            mutex_Lock(cie->accesslock);
+            freesettingsarray(infoArray);
+        }
+    }
+    if (!cie->isLoaded &&
     cie->detectionState == DETECTIONSTATE_PROBING_WINBOARD_2) {
         // positive match for winboard:
         if (strstr(line, "feature ") == line) {
@@ -153,6 +185,7 @@ void* userdata) {
         // parse CECPv2 options:
         if (strstr(line, "feature ") == line) {
             if (strstr(line, " done=1")) {
+                cie->isLoaded = 1;
                 cie->i.protocolType = strdup("cecp2");
                 int infoCount = 2;
                 char** infoArray = malloc(sizeof(char*)*(infoCount*2+1));
@@ -283,7 +316,7 @@ static void chessinterfacelaunchthread(void* userdata) {
     // if not UCI, probe for winboard:
     if (!isuci) {
         cie->detectionState = DETECTIONSTATE_PROBING_WINBOARD_2;
-        if (!sendline(cie, "xboard\r\nprotover 2")) {
+        if (!sendline(cie, "xboard\nprotover 2")) {
             cie->launchThreadIsRunning = 0;
             cie->i.loadError = strdup("Cannot send data to engine");
             mutex_Release(cie->accesslock);
@@ -314,25 +347,46 @@ static void chessinterfacelaunchthread(void* userdata) {
             i--;
         }
         if (!iscecp2) {
-            // load as legacy winboard engine
-            cie->i.protocolType = strdup("cecp1");
-            int infoCount = 2;
-            char** infoArray = malloc(sizeof(char*)*(infoCount*2+1));
-            infoArray[infoCount*2] = 0;
-            infoArray[0] = strdup("Variants");
-            infoArray[1] = strdup("normal");
-            infoArray[2] = strdup("SAN");
-            infoArray[3] = strdup("0");
-            cie->i.engineInfo = (const char* const*)infoArray;
-            void (*loadedCallback)(struct chessinterfaceengine* engine,
-              const struct chessengineinfo* info, void* userdata) =
-            cie->loadedCallback;
-            mutex_Release(cie->accesslock);
-            if (loadedCallback) {
+            // ensure this is a CECP1 engine by triggering a move
+            cie->detectionState = DETECTIONSTATE_PROBING_WINBOARD_1;
+            if (!sendline(cie, "new\ntime 1\ngo\n?")) {
+                cie->launchThreadIsRunning = 0;
+                cie->i.loadError = strdup("Cannot send data to engine");
+                mutex_Release(cie->accesslock);
                 loadedCallback(cie, &(cie->i), cie->userdata);
+                return;
             }
-            mutex_Lock(cie->accesslock);
-            freesettingsarray(infoArray);
+
+            // wait a maximum of 3 seconds for the winboard 1 move:
+            i = 30;
+            int iscecp1 = 0;
+            while (i > 0) {
+#ifdef UNIX
+                usleep(100 * 1000);
+#else
+                Sleep(100);
+#endif
+                mutex_Lock(cie->accesslock);
+                if (cie->isLoaded || cie->detectionState !=
+                DETECTIONSTATE_PROBING_WINBOARD_1) {
+                    iscecp1 = 1;
+                    break;
+                }
+                if (i > 1) {
+                    mutex_Release(cie->accesslock);
+                    if (checklaunchshutdown(cie)) {return;}
+                }
+                i--;
+            }
+
+            if (!iscecp1) {
+                // this is not a chess engine as it seems.
+                cie->launchThreadIsRunning = 0;
+                cie->i.loadError = strdup("Not a chess engine");
+                mutex_Release(cie->accesslock);
+                loadedCallback(cie, &(cie->i), cie->userdata);
+                return;
+            }
         }
     }
     cie->launchThreadIsRunning = 0; 

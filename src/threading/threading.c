@@ -158,10 +158,12 @@ void mutex_Lock(mutex* m) {
 #ifdef WINDOWS
     WaitForSingleObject(m->m, INFINITE);
 #else
+    int r = 35;
+    while (r == 35) {
+        r = pthread_mutex_lock(&m->m);
+    }
 #ifndef NDEBUG
-    assert(pthread_mutex_lock(&m->m) == 0);
-#else
-    pthread_mutex_lock(&m->m);
+    assert(r == 0);
 #endif
 #endif
 }
